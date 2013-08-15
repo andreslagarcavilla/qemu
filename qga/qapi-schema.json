@@ -94,6 +94,18 @@
 { 'command': 'guest-ping' }
 
 ##
+# @guest-privacy-reset:
+#
+# Have the guest agent reset all privacy-sensitive guest state
+# (entropy, host keys, etc). Pass a string to be used as seed
+# for entropy.
+#
+# Since: 1.6.0
+##
+{ 'command': 'guest-privacy-reset',
+  'data': { 'seed': 'str' } }
+
+##
 # @guest-get-time:
 #
 # Get the information about guest time relative to the Epoch

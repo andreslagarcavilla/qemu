@@ -11,6 +11,8 @@
  */
 
 #include <glib.h>
+#include <linux/random.h>
+#include <sys/ioctl.h>
 #include "qga/guest-agent-core.h"
 #include "qga-qmp-commands.h"
 #include "qapi/qmp/qerror.h"
@@ -43,6 +45,55 @@ int64_t qmp_guest_sync(int64_t id, Error **errp)
 void qmp_guest_ping(Error **err)
 {
     slog("guest-ping called");
+}
+
+void qmp_guest_privacy_reset(const char *seed, Error **errp)
+{
+    int fd;
+
+    slog("guest-privacy-reset start");
+
+    /* All of the below best effort. Hence the macro wrapper to effectively
+     * ignore return values of syscalls glibc does not want you to ignore. */
+#define IGNORE_RC(f) if (f == 0) {}
+
+    /* Reset random entropy. */
+    fd = open("/dev/urandom", O_WRONLY);
+    if ( fd >= 0 )
+    {
+        ioctl(fd, RNDCLEARPOOL);
+        IGNORE_RC(write(fd, seed, strlen(seed)));
+        close(fd);
+    }
+    fd = open("/dev/random", O_WRONLY);
+    if ( fd >= 0 )
+    {
+        ioctl(fd, RNDCLEARPOOL);
+        IGNORE_RC(write(fd, seed, strlen(seed)));
+        close(fd);
+    }
+
+    /* Fry ssh host keys, replace with fresh ones *after* randomness reset. */
+    unlink("/etc/ssh/ssh_host_key");
+    unlink("/etc/ssh/ssh_host_key.pub");
+    unlink("/etc/ssh/ssh_host_rsa_key");
+    unlink("/etc/ssh/ssh_host_rsa_key.pub");
+    unlink("/etc/ssh/ssh_host_dsa_key");
+    unlink("/etc/ssh/ssh_host_dsa_key.pub");
+    IGNORE_RC(system("ssh-keygen -N '' -t rsa1 -f /etc/ssh/ssh_host_key"));
+    IGNORE_RC(system("ssh-keygen -N '' -t rsa -f /etc/ssh/ssh_host_rsa_key"));
+    IGNORE_RC(system("ssh-keygen -N '' -t dsa -f /etc/ssh/ssh_host_dsa_key"));
+    IGNORE_RC(system("service sshd restart"));
+
+    /* Restart eth-based *physical* network interfaces, they may have been
+     * replugged with different nics. Note that dhclient will reset hostname in
+     * most scenarios. */
+    IGNORE_RC(system("find /sys/class/net -type l -exec test -L {}/device \\; -print | xargs -n1 basename | xargs -n1 ifdown"));
+    IGNORE_RC(system("find /sys/class/net -type l -exec test -L {}/device \\; -print | xargs -n1 basename | xargs -n1 ifup"));
+    /* If there is a network service it needs kicking (centos). */
+    IGNORE_RC(system("bash -c '[ -f /etc/init.d/network ] && service network restart'"));
+
+    slog("guest-privacy-reset finish");
 }
 
 struct GuestAgentInfo *qmp_guest_info(Error **err)
